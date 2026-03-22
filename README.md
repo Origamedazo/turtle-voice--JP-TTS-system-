@@ -24,5 +24,11 @@ AIのアシストを受けて開発された、オープンソースの音声合
 このプロジェクトは [GNU General Public License v3.0](LICENSE) の下で公開されています。
 PyQt6を使用しているため、本ソフトウェアのソースコードを改変または再配布する場合は、同じライセンス（GPL v3）を適用し、ソースコードを公開する必要があります。
 
+## その他
+オリガメ作の音源「めえめえ(MeMe)」のDLはこちらから　https://bowlroll.net/file/350758
+ソフト起動時に生成されるvoicebanksフォルダに入れてください
+
+##音源制作について
+後日公開予定
 ---
 Produced with AI Assistance.
