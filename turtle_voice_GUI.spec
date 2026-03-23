@@ -1,12 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import pyopenjtalk
 
+pyopenjtalk_dir = os.path.dirname(pyopenjtalk.__file__)
+dic_dir = os.path.join(pyopenjtalk_dir, 'open_jtalk_dic_utf_8-1.11')
 
 a = Analysis(
     ['gui_main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[
+        (dic_dir, os.path.join('pyopenjtalk', 'open_jtalk_dic_utf_8-1.11')),
+        ('voicebanks', 'voicebanks'),
+        ('user_dicts', 'user_dicts'),
+        ('image.ico', '.'),
+        ('image.png', '.'),
+    ],
+    hiddenimports=['PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', 'numpy', 'pyopenjtalk', 'soundfile', 'librosa', 'pandas', 'scipy'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -32,6 +42,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['image.ico'],
 )
 coll = COLLECT(
     exe,

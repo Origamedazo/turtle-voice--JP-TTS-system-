@@ -14,6 +14,20 @@ from engine_core import TTSCore
 from gui_advanced import AdvancedTabWidget
 from text_processing import set_active_dict
 
+def get_root_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.dirname(__file__))
+
+def get_resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(get_root_path(), relative_path)
+
+# Set OPEN_JTALK_DICT_DIR for pyopenjtalk before it's used
+if getattr(sys, 'frozen', False):
+    os.environ["OPEN_JTALK_DICT_DIR"] = get_resource_path(os.path.join("pyopenjtalk", "open_jtalk_dic_utf_8-1.11"))
+
 class JsonEditorDialog(QDialog):
     def __init__(self, filepath, parent=None):
         super().__init__(parent)
@@ -427,17 +441,14 @@ class TurtleVoiceGUI(QMainWindow):
         self.tabs = QTabWidget()
         self.tab_beginner = QWidget()
         self.tab_advanced = QWidget()
-        self.tab_pro = QWidget()
         self.tab_tools = QWidget()
 
         self.tabs.addTab(self.tab_beginner, "簡単モード (Beginner)")
         self.tabs.addTab(self.tab_advanced, "詳細モード (Advanced)")
-        self.tabs.addTab(self.tab_pro, "プロモード (Professional)")
         self.tabs.addTab(self.tab_tools, "音源設定 (Setup)")
         
         self.setup_beginner_tab()
         self.setup_advanced_tab()
-        self.setup_pro_tab()
         self.setup_tools_tab()
 
         self.tabs.currentChanged.connect(self.on_tab_changed)
@@ -622,32 +633,6 @@ class TurtleVoiceGUI(QMainWindow):
         
         return slider, row
 
-    def setup_pro_tab(self):
-        layout = QVBoxLayout(self.tab_pro)
-        
-        lbl_desc = QLabel("【プロモード】波形・フォルマントの破壊的編集\n（※高度な変態調声用パラメータ）")
-        lbl_desc.setStyleSheet("color: #ff9800; font-weight: bold; font-size: 16px;")
-        layout.addWidget(lbl_desc)
-
-        group = QGroupBox("全体変調・変態調声パラメータ")
-        g_layout = QVBoxLayout(group)
-        g_layout.setSpacing(15)
-
-        self.sl_formant, row1 = self.create_slider_row("フォルマントシフト", 0.5, 1.5, 1.0, 0.05)
-        self.sl_tension, row2 = self.create_slider_row("声帯緊張度 (Tension)", 0.5, 2.0, 1.0, 0.05)
-        self.sl_breath, row3 = self.create_slider_row("白雑音付加 (Breath)", 0.0, 1.0, 0.0, 0.05)
-
-        g_layout.addLayout(row1)
-        g_layout.addLayout(row2)
-        g_layout.addLayout(row3)
-        layout.addWidget(group)
-
-        self.btn_ext = QPushButton("外部波形エディタ連携 (WIP)")
-        self.btn_ext.setMinimumHeight(40)
-        self.btn_ext.setStyleSheet("background-color: #5d4037; font-weight: bold;")
-        layout.addWidget(self.btn_ext)
-        
-        layout.addStretch()
 
     def setup_tools_tab(self):
         import subprocess
@@ -768,7 +753,7 @@ class TurtleVoiceGUI(QMainWindow):
             QMessageBox.warning(self, "エラー", "編集する辞書を選択してください。")
             return
         
-        path = os.path.join("user_dicts", dict_name)
+        path = get_resource_path(os.path.join("user_dicts", dict_name))
         dlg = UserDictEditorDialog(path, self)
         if dlg.exec():
             # 辞書保存後に反映させるためコンボボックスの選択イベントを再発火させる
@@ -781,9 +766,9 @@ class TurtleVoiceGUI(QMainWindow):
         if not os.path.exists(base_dir):
             os.makedirs(base_dir, exist_ok=True)
             # user_dict.jsonを初期辞書としてコピーするか移行する
-            if os.path.exists("user_dict.json"):
+            if os.path.exists(get_resource_path("user_dict.json")):
                 import shutil
-                shutil.move("user_dict.json", os.path.join(base_dir, "def_user_dict.json"))
+                shutil.move(get_resource_path("user_dict.json"), os.path.join(base_dir, "def_user_dict.json"))
             
         files = [f for f in os.listdir(base_dir) if f.endswith('.json')]
         if not files:
@@ -792,12 +777,12 @@ class TurtleVoiceGUI(QMainWindow):
         else:
             self.combo_dict.addItems(files)
             # Default to first
-            set_active_dict(os.path.abspath(os.path.join(base_dir, files[0])))
+            set_active_dict(get_resource_path(os.path.join(base_dir, files[0])))
         self.combo_dict.blockSignals(False)
         
     def on_dict_changed(self, text):
         if text and text != "(辞書なし)":
-            set_active_dict(os.path.abspath(os.path.join("user_dicts", text)))
+            set_active_dict(get_resource_path(os.path.join("user_dicts", text)))
         else:
             set_active_dict("")
 
@@ -821,7 +806,7 @@ class TurtleVoiceGUI(QMainWindow):
 
     def populate_voicebank_list(self):
         self.combo_voice.clear()
-        base_dir = "voicebanks"
+        base_dir = get_resource_path("voicebanks")
         if not os.path.exists(base_dir):
             os.makedirs(base_dir, exist_ok=True)
             
@@ -835,7 +820,7 @@ class TurtleVoiceGUI(QMainWindow):
 
     def select_voicebank(self):
         folder_name = self.combo_voice.currentText()
-        folder = os.path.abspath(os.path.join("voicebanks", folder_name))
+        folder = get_resource_path(os.path.join("voicebanks", folder_name))
         
         if folder in self.cores_cache:
             self.core = self.cores_cache[folder]
@@ -887,7 +872,7 @@ class TurtleVoiceGUI(QMainWindow):
             QMessageBox.critical(self, "エラー", f"音源のロードに失敗しました:\n{msg}")
 
     def get_cached_core(self, folder_name):
-        folder = os.path.abspath(os.path.join("voicebanks", folder_name))
+        folder = get_resource_path(os.path.join("voicebanks", folder_name))
         if folder not in self.cores_cache:
             core = TTSCore()
             core.load_voicebank(folder)
@@ -1008,8 +993,6 @@ class TurtleVoiceGUI(QMainWindow):
                 self.btn_play.setEnabled(True)
                 self.btn_play.setText("▶ 再生 (Play)")
                 
-        elif current_tab == 2:  # Pro Mode
-            QMessageBox.information(self, "プロモード", "プロモードの操作は現在バックエンド開発機能（WIP）です。\nAdvancedタブを利用してください。")
 
     def save_project(self):
         import json
