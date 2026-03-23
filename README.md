@@ -27,6 +27,8 @@ PyQt6を使用しているため、本ソフトウェアのソースコードを
 ## その他
 オリガメ作の音源「めえめえ(MeMe)」のDLはこちらから　https://bowlroll.net/file/350758
 ソフト起動時に生成されるvoicebanksフォルダに入れてください
+ソフトの簡単な使い方動画
+https://www.youtube.com/watch?v=E_bINiwzhNE
 
 ##音源制作について
 後日公開予定
