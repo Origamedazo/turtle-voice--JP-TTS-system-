@@ -11,7 +11,7 @@ try:
 except ImportError:
     def apply_world_pitch(y, sr, ratio): return y
 
-from text_processing import get_mora_pitch, mora_to_phoneme_dict
+from text_processing import get_mora_pitch, mora_to_phoneme_dict, phoneme_list_from_moras
 from viterbi_engine import ViterbiEngine
 
 def normalize_volume(y, target_db=-20):
@@ -98,48 +98,60 @@ class TTSCore:
 
     def load_voicebank(self, folder_path, callback=None):
         """音源フォルダを読み込む。GUI向けに進捗コールバック対応"""
-        if callback: callback(0, "設定を読み込んでいます...")
+        if not folder_path: return False
         self.folder_path = folder_path
+        
+        idx_path = os.path.join(folder_path, "phoneme_index.json")
+        meta_path = os.path.join(folder_path, "metadata.csv")
+        
+        if not os.path.exists(idx_path) or not os.path.exists(meta_path):
+            print(f"⚠️ 音源データ不完全 (ロードをスキップ): {folder_path}")
+            return False
+
+        if callback: callback(0, "設定を読み込んでいます...")
         self.config = self.load_or_create_config(folder_path)
 
-        with open(os.path.join(folder_path, "phoneme_index.json"), 'r', encoding='utf-8') as f:
-            self.phoneme_index = json.load(f)
+        try:
+            with open(idx_path, 'r', encoding='utf-8') as f:
+                self.phoneme_index = json.load(f)
+                
+            if callback: callback(20, "F0データを読み込んでいます...")
+            self.f0_dict, self.avg_f0 = self.load_f0_data(os.path.join(folder_path, "F0Data.csv"))
+            if self.avg_f0 == 0: self.avg_f0 = 1.0
+    
+            if callback: callback(40, "メタデータと音声をキャッシュしています...")
+            self.metadata_lookup = {}
+            self.wav_cache = {}
             
-        if callback: callback(20, "F0データを読み込んでいます...")
-        self.f0_dict, self.avg_f0 = self.load_f0_data(os.path.join(folder_path, "F0Data.csv"))
-        if self.avg_f0 == 0: self.avg_f0 = 1.0
-
-        if callback: callback(40, "メタデータと音声をキャッシュしています...")
-        self.metadata_lookup = {}
-        self.wav_cache = {}
-        
-        # まず行数を数える（プログレスバー用）
-        meta_path = os.path.join(folder_path, "metadata.csv")
-        with open(meta_path, 'r', encoding='utf-8-sig') as f:
-            total_rows = sum(1 for line in f) - 1 # header
+            # まず行数を数える（プログレスバー用）
+            with open(meta_path, 'r', encoding='utf-8-sig') as f:
+                total_rows = sum(1 for line in f) - 1 # header
+                
+            with open(meta_path, 'r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                for idx, row in enumerate(reader):
+                    w_p = os.path.join(folder_path, row['file'])
+                    self.metadata_lookup[row['id']] = {
+                        'phoneme': row['phoneme'], 'start': int(row['start_time']), 
+                        'end': int(row['end_time']), 'duration_ms': float(row.get('duration_ms',100)), 'file': w_p
+                    }
+                    if w_p not in self.wav_cache: 
+                        _y, _sr = librosa.load(w_p, sr=None)
+                        self.wav_cache[w_p] = (_y, _sr)
+                        
+                    if callback and idx % 50 == 0: 
+                        callback(40 + int(50 * (idx / max(1, total_rows))), "メタデータと音声をキャッシュしています...")
+    
+            if callback: callback(90, "Viterbiエンジンを初期化しています...")
+            df = pd.DataFrame.from_dict(self.metadata_lookup, orient='index')
+            self.avg_durs = df.groupby('phoneme')['duration_ms'].mean().to_dict()
             
-        with open(meta_path, 'r', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            for idx, row in enumerate(reader):
-                w_p = os.path.join(folder_path, row['file'])
-                self.metadata_lookup[row['id']] = {
-                    'phoneme': row['phoneme'], 'start': int(row['start_time']), 
-                    'end': int(row['end_time']), 'duration_ms': float(row.get('duration_ms',100)), 'file': w_p
-                }
-                if w_p not in self.wav_cache: 
-                    _y, _sr = librosa.load(w_p, sr=None)
-                    self.wav_cache[w_p] = (_y, _sr)
-                    
-                if callback and idx % 50 == 0: 
-                    # 40% ~ 90% の間で進捗させる
-                    callback(40 + int(50 * (idx / max(1, total_rows))), "メタデータと音声をキャッシュしています...")
-
-        if callback: callback(90, "Viterbiエンジンを初期化しています...")
-        df = pd.DataFrame.from_dict(self.metadata_lookup, orient='index')
-        self.avg_durs = df.groupby('phoneme')['duration_ms'].mean().to_dict()
-        
-        self.engine = ViterbiEngine(self.f0_dict, self.metadata_lookup, self.avg_f0)
-        self.is_loaded = True
+            self.engine = ViterbiEngine(self.f0_dict, self.metadata_lookup, self.avg_f0)
+            self.is_loaded = True
+            return True
+        except Exception as e:
+            print(f"❌ 音源ロード中にエラーが発生しました: {e}")
+            return False
         if callback: callback(100, "ロード完了")
 
     def get_target_durations(self, phonemes):
@@ -180,13 +192,7 @@ class TTSCore:
                 if char in "ゃゅょぁぃぅぇぉ" and mora_list: mora_list[-1] += char
                 else: mora_list.append(char)
             
-            phonemes, last_v = [], "a"
-            for m in mora_list:
-                m_h = "".join([chr(ord(c)-0x60) if 0x30A1<=ord(c)<=0x30F6 else c for c in m])
-                p = mora_to_phoneme_dict.get(m_h, m_h)
-                if p in [":", "ー", "う"]: p = last_v
-                phonemes.append(p)
-                if p[-1] in 'aiueo': last_v = p[-1]
+            phonemes = phoneme_list_from_moras(mora_list)
 
             target_f0s = []
             num_mora = len(pitch_list)

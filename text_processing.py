@@ -144,6 +144,10 @@ mora_to_phoneme_dict = {
     "つぁ": "tsa", "つぃ": "tsi", "つぇ": "tse", "つぉ": "tso",
     "うぇ": "we", "うぉ": "wo",
     "ちぇ": "che", "しぇ": "she", "じぇ": "je",
+    "きぇ": "kye", "ぎぇ": "gye", "ひぇ": "hye", "びぇ": "bye", "ぴぇ": "pye", 
+    "にぇ": "nye", "みぇ": "mye", "りぇ": "rye",
+    "てゅ": "tyu", "でゅ": "dyu", "ふゅ": "fyu",
+    "うぃ": "wi", "うぁ": "ua",
 
     # 特殊音
     "っ": "pau", "ー": ":", " ": "pau"
@@ -151,3 +155,27 @@ mora_to_phoneme_dict = {
 
 def mora_to_phonemes(mora_list):
     return [mora_to_phoneme_dict.get(m, m) for m in mora_list]
+
+def phoneme_list_from_moras(mora_list):
+    """
+    モーラリストから合成・ラベリング用の音素リストを生成します。
+    長音や助詞の処理を含みます。
+    """
+    phonemes = []
+    last_v = "a"
+    for m in mora_list:
+        # カタカナをひらがなに変換
+        m_h = "".join([chr(ord(c)-0x60) if 0x30A1<=ord(c)<=0x30F6 else c for c in m])
+        p = mora_to_phoneme_dict.get(m_h, m_h)
+        
+        # 長音処理 (ー, う, :) を前の母音に置き換え
+        if p in [":", "ー", "う"]:
+            p = last_v
+        
+        phonemes.append(p)
+        
+        # 最後の母音を記録 (a, i, u, e, o のいずれかで終わる場合)
+        if p[-1] in 'aiueo':
+            last_v = p[-1]
+            
+    return phonemes

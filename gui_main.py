@@ -13,6 +13,7 @@ import json
 from engine_core import TTSCore
 from gui_advanced import AdvancedTabWidget
 from text_processing import set_active_dict
+from ita_labeler import ITALabeler
 
 def get_root_path():
     if getattr(sys, 'frozen', False):
@@ -228,16 +229,19 @@ class DialogueBlockWidget(QGroupBox):
     def update_icon(self, text):
         import os
         from PyQt6.QtGui import QPixmap
-        if not text: return
-        core = self.main_gui.get_cached_core(text)
-        if hasattr(core, 'folder_path') and core.folder_path:
-            icon_path = os.path.join(core.folder_path, "icon.png")
+        if not text or text == "(voicebanksフォルダ内が空です)": return
+        
+        folder = get_resource_path(os.path.join("voicebanks", text))
+        if os.path.exists(folder):
+            icon_path = os.path.join(folder, "icon.png")
             if not os.path.exists(icon_path):
-                icon_path = os.path.join(core.folder_path, "icon.jpg")
+                icon_path = os.path.join(folder, "icon.jpg")
+            
             if os.path.exists(icon_path):
                 pixmap = QPixmap(icon_path)
                 self.lbl_icon.setPixmap(pixmap.scaled(60, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
                 return
+        
         self.lbl_icon.clear()
         self.lbl_icon.setText("No Icon")
 
@@ -345,12 +349,36 @@ class VoiceLoadThread(QThread):
 
     def run(self):
         try:
-            self.core.load_voicebank(self.path, callback=self.progress.emit)
-            self.finished.emit(True, "ロード完了")
+            success = self.core.load_voicebank(self.path, callback=self.progress.emit)
+            if success:
+                self.finished.emit(True, "ロード完了")
+            else:
+                self.finished.emit(False, "音源データは不完全ですが、フォルダは選択されました。\n[ツール]タブからセットアップを行ってください。")
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.finished.emit(False, str(e))
+            self.finished.emit(False, f"エラーが発生しました: {str(e)}")
+
+class ITALabelingThread(QThread):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(int, int)
+
+    def __init__(self, labeler, folder_path, prefix=None, num_pos="last"):
+        super().__init__()
+        self.labeler = labeler
+        self.folder_path = folder_path
+        self.prefix = prefix
+        self.num_pos = num_pos
+
+    def run(self):
+        try:
+            p, e = self.labeler.process_folder(self.folder_path, callback=self.progress.emit, 
+                                               prefix=self.prefix, num_pos=self.num_pos)
+            self.finished.emit(p, e)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            self.finished.emit(-1, 0)
 
 
 class TurtleVoiceGUI(QMainWindow):
@@ -436,19 +464,25 @@ class TurtleVoiceGUI(QMainWindow):
         
         self.populate_voicebank_list()
         self.populate_dict_list()
+        
+        # 初期状態では明示的に空の core にしておく (自動ロード防止)
+        self.core = TTSCore() 
 
         # 2. Tabs (Modes)
         self.tabs = QTabWidget()
         self.tab_beginner = QWidget()
         self.tab_advanced = QWidget()
+        self.tab_itacorpus = QWidget()
         self.tab_tools = QWidget()
 
         self.tabs.addTab(self.tab_beginner, "簡単モード (Beginner)")
         self.tabs.addTab(self.tab_advanced, "詳細モード (Advanced)")
+        self.tabs.addTab(self.tab_itacorpus, "音源制作 (Voicebank)")
         self.tabs.addTab(self.tab_tools, "音源設定 (Setup)")
         
         self.setup_beginner_tab()
         self.setup_advanced_tab()
+        self.setup_itacorpus_tab()
         self.setup_tools_tab()
 
         self.tabs.currentChanged.connect(self.on_tab_changed)
@@ -634,6 +668,100 @@ class TurtleVoiceGUI(QMainWindow):
         return slider, row
 
 
+    def setup_itacorpus_tab(self):
+        layout = QVBoxLayout(self.tab_itacorpus)
+        
+        lbl_info = QLabel("【ITAコーパス自動ラベリング】\n"
+                          "ITAコーパス方式で録音されたWAVファイル（EMO-001.wav等）に対し、\n"
+                          "自動で .lab ファイル（音素ラベル）を生成します。")
+        lbl_info.setStyleSheet("font-weight: bold; font-size: 14px; color: #2E7D32;")
+        layout.addWidget(lbl_info)
+
+        desc = QLabel("※注意: アライメントは簡易的な線形配分です。タイミングの微調整は別途必要になる場合があります。")
+        desc.setStyleSheet("font-size: 12px; color: #666;")
+        layout.addWidget(desc)
+
+        group = QGroupBox("実行設定")
+        g_layout = QVBoxLayout(group)
+        
+        path_layout = QHBoxLayout()
+        self.lbl_ita_path = QLabel("フォルダ未選択")
+        self.lbl_ita_path.setStyleSheet("background: #fff; border: 1px solid #ccc; padding: 5px;")
+        btn_select = QPushButton("フォルダを選択")
+        btn_select.clicked.connect(self.select_ita_folder)
+        path_layout.addWidget(btn_select)
+        g_layout.addLayout(path_layout)
+
+        rule_layout = QHBoxLayout()
+        rule_layout.addWidget(QLabel("コーパス種別:"))
+        self.combo_ita_prefix = QComboBox()
+        self.combo_ita_prefix.addItems(["自動判定", "EMO (1-100 感情文章)", "REC (1-324 朗読文章)"])
+        rule_layout.addWidget(self.combo_ita_prefix)
+        
+        rule_layout.addWidget(QLabel("ID(数字)の場所:"))
+        self.combo_ita_num = QComboBox()
+        self.combo_ita_num.addItems(["ファイル名末尾の数字 (推奨)", "ファイル名先頭の数字"])
+        rule_layout.addWidget(self.combo_ita_num)
+        g_layout.addLayout(rule_layout)
+        
+        self.btn_run_labeling = QPushButton("自動ラベリング開始")
+        self.btn_run_labeling.setMinimumHeight(45)
+        self.btn_run_labeling.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self.btn_run_labeling.clicked.connect(self.start_ita_labeling)
+        g_layout.addWidget(self.btn_run_labeling)
+        
+        layout.addWidget(group)
+
+        self.ita_log = QTextEdit()
+        self.ita_log.setReadOnly(True)
+        self.ita_log.setPlaceholderText("実行ログがここに表示されます...")
+        layout.addWidget(QLabel("実行ログ:"))
+        layout.addWidget(self.ita_log)
+        
+        layout.addStretch()
+
+    def select_ita_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "WAVファイルが含まれるフォルダを選択")
+        if folder:
+            self.lbl_ita_path.setText(folder)
+
+    def start_ita_labeling(self):
+        folder = self.lbl_ita_path.text()
+        if not os.path.isdir(folder):
+            QMessageBox.warning(self, "エラー", "有効なフォルダを選択してください。")
+            return
+        
+        corpus_path = get_resource_path("ita_corpus.json")
+        if not os.path.exists(corpus_path):
+            QMessageBox.critical(self, "エラー", "ita_corpus.json が見つかりませんでした。")
+            return
+            
+        self.btn_run_labeling.setEnabled(False)
+        self.ita_log.clear()
+        self.ita_log.append("🚀 ラベリング処理を開始します...")
+
+        prefix_idx = self.combo_ita_prefix.currentIndex()
+        prefix = None if prefix_idx == 0 else "EMO" if prefix_idx == 1 else "REC"
+        num_pos = "last" if self.combo_ita_num.currentIndex() == 0 else "first"
+        
+        try:
+            labeler = ITALabeler(corpus_path)
+            self.label_thread = ITALabelingThread(labeler, folder, prefix=prefix, num_pos=num_pos)
+            self.label_thread.progress.connect(self.ita_log.append)
+            self.label_thread.finished.connect(self.on_labeling_finished)
+            self.label_thread.start()
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"不具合が発生しました:\n{e}")
+            self.btn_run_labeling.setEnabled(True)
+
+    def on_labeling_finished(self, p, e):
+        self.btn_run_labeling.setEnabled(True)
+        if p == -1:
+            QMessageBox.critical(self, "完了", "エラーが発生しました。ログを確認してください。")
+        else:
+            QMessageBox.information(self, "完了", f"処理が完了しました！\n成功: {p} 件\nエラー/スキップ: {e} 件")
+            self.ita_log.append(f"\n✨ すべての処理が終了しました (成功: {p}, 失敗: {e})")
+
     def setup_tools_tab(self):
         import subprocess
         layout = QVBoxLayout(self.tab_tools)
@@ -660,13 +788,26 @@ class TurtleVoiceGUI(QMainWindow):
                 # F0er.py は引数でもパスを受け取れるようになっているが、labConverter等は標準入力を待つ
                 # 汎用的に Popen で渡す
                 CREATE_NO_WINDOW = 0x08000000
-                p = subprocess.Popen([sys.executable, script_path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.core.folder_path, creationflags=CREATE_NO_WINDOW, text=True, encoding='utf-8')
-                stdout, stderr = p.communicate(input=f'"{tgt_path}"\n')
+                # 標準入力待ちを廃止し、コマンドライン引数でパスを渡す
+                p = subprocess.Popen([sys.executable, script_path, tgt_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.core.folder_path, creationflags=CREATE_NO_WINDOW)
+                stdout_bytes, stderr_bytes = p.communicate()
+                
+                # 手動でデコードを試みる
+                def decode_buffer(buf):
+                    if not buf: return ""
+                    try:
+                        return buf.decode('utf-8')
+                    except:
+                        return buf.decode('cp932', errors='replace')
+
+                stdout = decode_buffer(stdout_bytes)
+                stderr = decode_buffer(stderr_bytes)
                 
                 # ログ表示ダイアログ
+                out_msg = (stdout if stdout else "") + (stderr if stderr else "")
                 msg = QMessageBox(self)
                 msg.setWindowTitle(f"{script_name} 実行結果")
-                msg.setText(f"実行完了しました。\n[出力]\n{stdout[-300:]}")
+                msg.setText(f"実行完了しました。\n[出力]\n{out_msg[-500:]}")
                 msg.exec()
             except Exception as e:
                 import traceback
@@ -675,7 +816,7 @@ class TurtleVoiceGUI(QMainWindow):
 
         btn_lab = QPushButton("STEP1: labConverter 実行 (.lab -> metadata.csv 作成)")
         btn_lab.setMinimumHeight(40)
-        btn_lab.clicked.connect(lambda: run_tool("labConverter.py", os.listdir(self.core.folder_path)[0] if any(f.endswith('.lab') for f in os.listdir(self.core.folder_path)) else "error.lab"))
+        btn_lab.clicked.connect(lambda: run_tool("labConverter.py", self.core.folder_path))
 
         btn_f0 = QPushButton("STEP2: F0er 実行 (metadata.csv -> F0Data.csv 作成)")
         btn_f0.setMinimumHeight(40)
@@ -824,7 +965,7 @@ class TurtleVoiceGUI(QMainWindow):
         
         if folder in self.cores_cache:
             self.core = self.cores_cache[folder]
-            self.on_voice_loaded(True, "Cache loaded")
+            self.on_voice_loaded(self.core.is_loaded, "Cache loaded")
             return
             
         if os.path.exists(folder):
@@ -846,7 +987,9 @@ class TurtleVoiceGUI(QMainWindow):
     def on_voice_loaded(self, success, msg):
         self.btn_load_voice.setEnabled(True)
         self.progress_bar.setValue(100 if success else 0)
-        if success:
+        
+        # 成功している、またはフォルダパスが設定されていれば（不完全な音源でも）アイコン表示を試みる
+        if success or (hasattr(self.core, 'folder_path') and self.core.folder_path):
             icon_path = os.path.join(self.core.folder_path, "icon.png")
             if not os.path.exists(icon_path):
                 icon_path = os.path.join(self.core.folder_path, "icon.jpg")
@@ -857,6 +1000,7 @@ class TurtleVoiceGUI(QMainWindow):
                 self.lbl_icon.clear()
                 self.lbl_icon.setText("No Icon")
                 
+        if success:
             # Update combo_voice in Dialogue blocks to match
             for i in range(self.blocks_layout.count()):
                 w = self.blocks_layout.itemAt(i).widget()
@@ -869,7 +1013,11 @@ class TurtleVoiceGUI(QMainWindow):
                     if w.combo_voice.count() == 0:
                         w.combo_voice.addItems([self.combo_voice.itemText(k) for k in range(self.combo_voice.count()) if self.combo_voice.itemText(k) != "(voicebanksフォルダ内が空です)"])
         else:
-            QMessageBox.critical(self, "エラー", f"音源のロードに失敗しました:\n{msg}")
+            if hasattr(self.core, 'folder_path') and self.core.folder_path:
+                # 不完全な音源でも、フォルダが正当なら警告にとどめる（ツールの実行を可能にするため）
+                QMessageBox.warning(self, "音源データ不完全", f"{msg}\n\nこの時点では音声合成はできません。")
+            else:
+                QMessageBox.critical(self, "エラー", f"音源のロードに失敗しました:\n{msg}")
 
     def get_cached_core(self, folder_name):
         folder = get_resource_path(os.path.join("voicebanks", folder_name))

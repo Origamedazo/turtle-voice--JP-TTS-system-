@@ -1,4 +1,4 @@
-﻿import numpy as np
+import numpy as np
 import pyworld as pw
 import librosa
 import pandas as pd
@@ -11,7 +11,7 @@ import sys
 SR = 44100
 
 print("===================================")
-print("🎤 音源のF0（音の高さ）を測定します！")
+print(" 音源のF0（音の高さ）を測定します")
 print("===================================")
 
 
@@ -22,17 +22,17 @@ def get_metadata_path():
     # コマンドライン引数対応（ドラッグ＆ドロップ）
     if len(sys.argv) > 1:
         path = sys.argv[1]
-        print("📂 引数からmetadataを取得:", path)
+        print("[INFO] 引数からmetadataを取得:", path)
     else:
-        print("📂 metadata.csv のパスを入力してください")
+        print("metadata.csv のパスを入力してください")
         path = input(">>> ").strip().strip('"')
 
     # 存在チェック
     if not os.path.exists(path):
-        print("❌ ファイルが見つかりません:", path)
+        print("[ERROR] ファイルが見つかりません:", path)
         return None
 
-    print("✅ metadata.csv 確認OK")
+    print("[SUCCESS] metadata.csv 確認OK")
     return path
 
 
@@ -40,16 +40,16 @@ def get_metadata_path():
 # F0抽出
 # =========================
 def extract_f0(wav_path):
-    print("🔊 音声読み込み:", wav_path)
+    print("[INFO] 音声読み込み:", wav_path)
 
     x, _ = librosa.load(wav_path, sr=SR)
     x = x.astype(np.float64)
 
-    print("📈 F0抽出中...")
+    print("F0抽出中...")
     f0, t = pw.dio(x, SR)
     f0 = pw.stonemask(x, f0, t, SR)
 
-    print("✅ F0抽出完了")
+    print("[SUCCESS] F0抽出完了")
     return f0, t
 
 
@@ -58,10 +58,10 @@ def extract_f0(wav_path):
 # metadata読み込み
 # =========================
 def load_metadata(csv_path):
-    print("📄 metadata.csv 読み込み中...")
+    print("metadata.csv 読み込み中...")
     df = pd.read_csv(csv_path)
 
-    print(f"✅ {len(df)} 個の音素を読み込みました")
+    print(f"[SUCCESS] {len(df)} 個の音素を読み込みました")
     return df
 
 
@@ -83,7 +83,7 @@ def sample_to_frame(sample_index, t):
 def extract_phoneme_f0(df, f0, t):
     results = []
 
-    print("🎯 音素ごとのF0を計算中...")
+    print("音素ごとのF0を計算中...")
 
     for i, row in df.iterrows():
         phoneme = row["phoneme"]
@@ -100,7 +100,7 @@ def extract_phoneme_f0(df, f0, t):
         end_f = min(len(f0), end_f)
 
         if end_f <= start_f:
-            print(f"⚠️ 無効区間: {id_name}")
+            print(f"[WARN] 無効区間: {id_name}")
             continue
 
         segment = f0[start_f:end_f]
@@ -111,7 +111,7 @@ def extract_phoneme_f0(df, f0, t):
         else:
             mean_f0 = 0
 
-        print(f"  ▶ {id_name:<10} ({phoneme}) : {round(mean_f0, 2)} Hz")
+        print(f"  -> {id_name:<10} ({phoneme}) : {round(mean_f0, 2)} Hz")
 
         results.append({
             "id": id_name,
@@ -119,7 +119,7 @@ def extract_phoneme_f0(df, f0, t):
             "f0": mean_f0
         })
 
-    print("✅ 音素F0計算完了")
+    print("[SUCCESS] 音素F0計算完了")
     return results
 
 
@@ -127,7 +127,7 @@ def extract_phoneme_f0(df, f0, t):
 # CSV保存
 # =========================
 def save_f0_csv(results, output_path="F0Data.csv"):
-    print("💾 CSV書き込み中...")
+    print("CSV書き込み中...")
 
     valid_f0 = [r["f0"] for r in results if r["f0"] > 0]
     avg_f0 = np.mean(valid_f0) if len(valid_f0) > 0 else 0
@@ -147,8 +147,8 @@ def save_f0_csv(results, output_path="F0Data.csv"):
     df = pd.DataFrame(data)
     df.to_csv(output_path, index=False, encoding="utf-8-sig")
 
-    print("✅ 保存完了:", output_path)
-    print(f"📊 全体平均F0: {round(avg_f0, 2)} Hz")
+    print("[SUCCESS] 保存完了:", output_path)
+    print(f"全体平均F0: {round(avg_f0, 2)} Hz")
 
 
 # =========================
@@ -158,11 +158,11 @@ def process():
     metadata_path = get_metadata_path()
 
     if metadata_path is None:
-        print("⚠️ 処理を終了します")
+        print("[WARN] 処理を終了します")
         return
 
     print("===================================")
-    print("🎤 F0抽出処理開始")
+    print(" F0抽出処理開始")
     print("===================================")
 
     df = load_metadata(metadata_path)
@@ -172,7 +172,7 @@ def process():
     wav_path = os.path.join(base_dir, df.iloc[0]["file"])
 
     if not os.path.exists(wav_path):
-        print("❌ 音声ファイルが見つかりません:", wav_path)
+        print("[ERROR] 音声ファイルが見つかりません:", wav_path)
         return
 
     f0, t = extract_f0(wav_path)
@@ -182,7 +182,7 @@ def process():
     save_f0_csv(results)
 
     print("===================================")
-    print("🎉 すべての処理が完了しました！")
+    print(" すべての処理が完了しました")
     print("===================================")
 
 

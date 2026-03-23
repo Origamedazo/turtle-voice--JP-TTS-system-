@@ -1,18 +1,22 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import csv
 import json
 import os
+import sys
 
 def create_phoneme_index():
-    print("こんにちは！metadata.csvから音素インデックス(JSON)を作成します。")
+    print("===================================")
+    print("[INFO] 音素インデックスを作成します")
+    print("===================================")
 
-    # 1. ファイルパスの入力
-    print(r"metadata.csvのパスを入力してください。")
-    raw_input = input("パス：")
-    file_path = raw_input.replace('"', '').strip()
+    if len(sys.argv) > 1:
+        csv_path = sys.argv[1]
+    else:
+        print("metadata.csv のパスを入力してください")
+        csv_path = input(">>> ").strip().strip('"')
 
-    if not os.path.exists(file_path):
-        print("エラー：ファイルが見つかりません。")
+    if not os.path.exists(csv_path):
+        print("エラー: ファイルが見つかりません。")
         return
 
     # 2. データの分類用辞書
@@ -20,7 +24,7 @@ def create_phoneme_index():
     phoneme_dict = {}
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(csv_path, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 p_type = row['phoneme'].strip() # 親となる音素名 (a, i, u...)
